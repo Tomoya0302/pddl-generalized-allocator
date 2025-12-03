@@ -12,16 +12,16 @@ python fast-downward.py ../domains/codmap15-fd/woodworking08/domain/domain.pddl 
 python fast-downward.py ../domains/codmap15-fd/zenotravel/domain/domain.pddl ../domains/codmap15-fd/zenotravel/problems/pfile3.pddl --search "lazy_greedy([ff()], preferred=[ff()])"
 
 
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/blocksworld/domain/domain.pddl --problem domains/codmap15-fd/blocksworld/problems/probBLOCKS-9-0.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/depot/domain/domain.pddl --problem domains/codmap15-fd/depot/problems/pfile1.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/driverlog/domain/domain.pddl --problem domains/codmap15-fd/driverlog/problems/pfile1.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/elevators08/domain/domain.pddl --problem domains/codmap15-fd/elevators08/problems/p01.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/logistics00/domain/domain.pddl --problem domains/codmap15-fd/logistics00/problems/probLOGISTICS-4-0.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/rovers/domain/domain.pddl --problem domains/codmap15-fd/rovers/problems/p10.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/taxi/domain/domain.pddl --problem domains/codmap15-fd/taxi/problems/p01.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/wireless/domain/domain.pddl --problem domains/codmap15-fd/wireless/problems/p01.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/woodworking08/domain/domain.pddl --problem domains/codmap15-fd/woodworking08/problems/p01.pddl --num-solutions 5 --seed 123 --output data/assignments.json
-python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/zenotravel/domain/domain.pddl --problem domains/codmap15-fd/zenotravel/problems/pfile3.pddl --num-solutions 5 --seed 123 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/blocksworld/domain/domain.pddl --problem domains/codmap15-fd/blocksworld/problems/probBLOCKS-9-0.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/depot/domain/domain.pddl --problem domains/codmap15-fd/depot/problems/pfile1.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/driverlog/domain/domain.pddl --problem domains/codmap15-fd/driverlog/problems/pfile1.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/elevators08/domain/domain.pddl --problem domains/codmap15-fd/elevators08/problems/p01.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/logistics00/domain/domain.pddl --problem domains/codmap15-fd/logistics00/problems/probLOGISTICS-4-0.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/rovers/domain/domain.pddl --problem domains/codmap15-fd/rovers/problems/p10.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/taxi/domain/domain.pddl --problem domains/codmap15-fd/taxi/problems/p01.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/wireless/domain/domain.pddl --problem domains/codmap15-fd/wireless/problems/p01.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/woodworking08/domain/domain.pddl --problem domains/codmap15-fd/woodworking08/problems/p01.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
+python -m pddl_generalized_allocator.cli.main --domain domains/codmap15-fd/zenotravel/domain/domain.pddl --problem domains/codmap15-fd/zenotravel/problems/pfile3.pddl --num-solutions 5 --seed 123 --max-subtasks 3 --output data/assignments.json
 
 
 ---
