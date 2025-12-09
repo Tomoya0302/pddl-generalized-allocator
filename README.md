@@ -29,29 +29,63 @@ python -m src.analyze.cluster_solutions --config configs/clustering_analysis_con
 
 ```
 pddl-generalized-allocator/
-├── src/                          # ソースコード
-│   ├── cli/                     # コマンドラインツール
-│   │   ├── main.py             # 単一解生成
-│   │   └── generate_diverse_solutions.py  # 多様解生成
-│   ├── analyze/                 # 分析ツール
-│   │   ├── cluster_solutions.py           # クラスタリング分析
-│   │   ├── hierarchical_clustering.py     # 階層クラスタリング
-│   │   └── feature_extractor.py          # 特徴量抽出
-│   ├── config/                  # 設定管理
-│   ├── pddl/                   # PDDLパーサー
-│   ├── planning/               # プランニングエンジン
-│   └── multiagent/             # マルチエージェント機能
-├── configs/                     # 設定ファイル
-│   ├── default_config.yaml     # デフォルト設定
-│   ├── clustering_analysis_config.yaml  # クラスタリング設定
-│   └── role_configs/           # 役割設定
-├── pddl/                       # PDDLドメイン・問題ファイル
-├── README/                     # ドキュメント
-│   ├── README_usage_guide.md   # 📖 実行ガイド（必読）
-│   ├── README_diverse_solutions.md      # 多様解生成詳細
-│   └── README_clustering_analysis.md    # クラスタリング分析詳細
-└── diverse_results/            # 生成結果（例）
-└── clustering_analysis/        # 分析結果（例）
+├── README
+│   ├── README_clustering_analysis.md
+│   ├── README_diverse_solutions.md
+│   ├── README_usage_guide.md
+│   ├── TROUBLESHOOTING.md
+│   ├── pddl_multi_agent_algorithm.md
+│   └── role_extraction_role_based_partition_generalized.md
+├── README.md
+├── configs
+│   ├── clustering_analysis_config.yaml
+│   ├── default_config.yaml
+│   └── role_configs
+│       └── example_roles.json
+├── pddl
+│   ├── large_weld_domain
+│   │   ├── domain.pddl
+│   │   └── problem.pddl
+│   └── small_weld_domain
+│       ├── domain.pddl
+│       └── problem.pddl
+└── src
+    ├── analyze
+    │   ├── analyze_results.py
+    │   ├── cluster_solutions.py
+    │   ├── feature_extractor.py
+    │   └── hierarchical_clustering.py
+    ├── cli
+    │   ├── generate_diverse_solutions.py
+    │   └── main.py
+    ├── config
+    │   ├── clustering_analysis_schema.py
+    │   ├── loader.py
+    │   └── schema.py
+    ├── multiagent
+    │   ├── agents.py
+    │   └── capabilities.py
+    ├── pddl
+    │   ├── ast.py
+    │   ├── domain_parser.py
+    │   ├── problem_parser.py
+    │   ├── sexpr_parser.py
+    │   ├── static_analysis.py
+    │   ├── tokenizer.py
+    │   └── types.py
+    ├── planning
+    │   ├── allocation.py
+    │   ├── causal_graph.py
+    │   ├── clustering.py
+    │   ├── constraint_aware_merge.py
+    │   ├── goal_graph.py
+    │   ├── landmarks.py
+    │   ├── multi_objective_merge.py
+    │   ├── roles.py
+    │   ├── subtasks.py
+    │   └── task.py
+    └── utils
+        └── random_utils.py
 ```
 
 ## 🎯 主要機能
