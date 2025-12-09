@@ -1,0 +1,68 @@
+{
+  "domain": "Welding-domain",
+  "goal_predicates": ["welded"],
+  "roles": {
+    "base": {
+      "extractors": [
+        {
+          "predicate": "reachable",
+          "bindings": {
+            "1": "goal:0"
+          },
+          "value_arg": 0
+        }
+      ]
+    },
+    "hand_type": {
+      "extractors": [
+        {
+          "predicate": "weld_type",
+          "bindings": {
+            "0": "goal:0"
+          },
+          "value_arg": 1
+        }
+      ]
+    },
+    "hand": {
+      "extractors": [
+        {
+          "predicate": "hand_type",
+          "bindings": {
+            "1": "role:hand_type"
+          },
+          "value_arg": 0
+        }
+      ]
+    },
+    "agent": {
+      "extractors": [
+        {
+          "predicate": "hand_rel",
+          "bindings": {
+            "1": "role:hand"
+          },
+          "value_arg": 0
+        }
+      ]
+    }
+  },
+  "cluster_keys": ["base", "hand_type"],
+  "output_role_fields": ["base", "hand_type", "agent", "hand"],
+  "agent_role_extractors": {
+    "hand": {
+      "predicate": "hand_rel",
+      "bindings": {
+        "0": "agent:self"
+      },
+      "value_arg": 1
+    },
+    "hand_type": {
+      "predicate": "hand_type",
+      "bindings": {
+        "0": "role:hand"
+      },
+      "value_arg": 1
+    }
+  }
+}

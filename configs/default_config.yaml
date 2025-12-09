@@ -1,0 +1,39 @@
+pddl:
+  # domain_file: "pddl/small_weld_task/domain.pddl"
+  # problem_file: "pddl/small_weld_task/problem.pddl"
+  domain_file: "pddl/large_weld_task/domain.pddl"
+  problem_file: "pddl/large_weld_task/problem.pddl"
+  # MA-PDDL 拡張の一部を使うなら、そのフラグ
+  multiagent_extension: "kovacs-2012"   # 文字列 or null
+
+roles:
+  role_config_file: "configs/role_configs/example_roles.json"
+  # Role 抽出が失敗したときの扱い
+  on_missing_role: "skip_goal"   # "error" | "skip_goal"
+
+clustering:
+  use_landmarks: true
+  landmark_max_depth: 3
+  max_cluster_size: 10        # Step 7
+  max_subtasks: 40            # Step 10 (K_max)
+  epsilon_start: 0.0          # e-greedy 開始値
+  epsilon_step: 0.2
+  max_retries: 50
+  random_seed: 42
+  solution_timeout: 120  # 各解の生成タイムアウト（秒）
+  merge_compatible_subtasks: true     # サブタスク統合を有効化
+  max_goals_per_subtask: 10           # 1つのサブタスクの最大ゴール数
+  # 制約考慮型統合の設定（ドメイン汎化）
+  constraint_binary_predicates: ["reachable"]  # バイナリ制約述語
+  constraint_type_predicates: ["weld_type"]    # タイプ制約述語
+  constraint_goal_object_index: 0              # ゴール引数のターゲットオブジェクトインデックス
+  # 多目的最適化戦略
+  optimization_strategy: "auto"                # "minimize_subtasks" | "balanced" | "distribute_goals" | "auto"
+  strategy_randomness: 0.2                     # 戦略のランダム性 [0.0-1.0]
+
+multiagent:
+  agent_types: ["agent"]      # PDDL 型名のリスト
+  capability_mode: "parameter-type"  # 他のモードを増やす余地
+
+allocation:
+  cost_function: "inverse_capability_size"  # 実装内で分岐
