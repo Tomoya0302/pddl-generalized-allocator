@@ -1,0 +1,57 @@
+# 階層的クラスタリング分析の設定ファイル
+
+# データソース
+results_directory: "analysis_dataset"
+result_file_pattern: "result_*.json"
+
+# 特徴量抽出設定
+feature_extraction:
+  # 基本統計特徴量
+  use_subtask_count: true
+  use_goal_variance: true
+  use_goal_mean: true
+  use_goal_min_max: true
+  use_agent_balance: true
+  
+  # 汎用的な構造特徴量
+  use_structural_features: true
+  role_config_file: "configs/role_configs/example_roles.json"
+  structural_feature_types:
+    - "role_diversity"
+    - "role_complexity"
+    - "subtask_similarity"
+  
+  # 正規化設定
+  normalize_features: true
+  normalization_method: "standard"  # "standard", "minmax", "robust"
+
+# クラスタリング設定
+clustering:
+  method: "ward"                    # "ward", "complete", "average", "single"
+  metric: "euclidean"               # "euclidean", "manhattan", "cosine"
+  num_clusters: null                # null = 自動決定
+  auto_cluster_method: "silhouette" # "silhouette", "elbow", "dendrogram_gap"
+  max_clusters: 10
+  min_clusters: 5
+
+# 可視化設定
+visualization:
+  create_dendrogram: true
+  create_scatter_plots: true
+  create_feature_importance: true
+  create_cluster_summary: true
+  
+  # 図のサイズとスタイル
+  figure_size: [12, 8]
+  dpi: 300
+  style: "seaborn-v0_8"
+  color_palette: "husl"
+
+# 出力設定
+output:
+  output_dir: "clustering_analysis"
+  save_features_csv: true
+  save_cluster_assignments: true
+  save_plots: true
+  save_summary_report: true
+  prefix: "solution_clustering"
