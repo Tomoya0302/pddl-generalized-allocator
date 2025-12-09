@@ -1,8 +1,8 @@
 pddl:
-  # domain_file: "pddl/small_weld_task/domain.pddl"
-  # problem_file: "pddl/small_weld_task/problem.pddl"
-  domain_file: "pddl/large_weld_task/domain.pddl"
-  problem_file: "pddl/large_weld_task/problem.pddl"
+  domain_file: "pddl/small_weld_domain/domain.pddl"
+  problem_file: "pddl/small_weld_domain/problem.pddl"
+  # domain_file: "pddl/large_weld_domain/domain.pddl"
+  # problem_file: "pddl/large_weld_domain/problem.pddl"
   # MA-PDDL 拡張の一部を使うなら、そのフラグ
   multiagent_extension: "kovacs-2012"   # 文字列 or null
 
