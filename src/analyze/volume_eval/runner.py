@@ -103,21 +103,58 @@ def plot_pca_convex_hull_3d(X, output_dir):
         print("Convex hull failed in 3D. Possibly due to degenerate geometry.")
 
 def plot_r_theta_distribution(X, feature_names, output_dir):
+    """
+    各特徴量ごとに
+      - 半径: 平均値 (0〜1 に正規化済みを想定)
+      - 色   : 標準偏差（分散の大きさ）
+    を表すポーラーバーチャートを描く。
+    """
     num_feats = X.shape[1]
-    theta = np.linspace(0, 2 * np.pi, num_feats, endpoint=False)
-    X_plot = np.concatenate([X, X[:, [0]]], axis=1)
-    theta = np.append(theta, theta[0])
 
-    plt.figure(figsize=(8, 8))
-    ax = plt.subplot(111, polar=True)
-    for row in X_plot:
-        ax.plot(theta, row, color='blue', alpha=0.1)
-    ax.plot(theta, np.mean(X_plot, axis=0), color='red', linewidth=2, label='Mean')
-    ax.set_xticks(theta[:-1])
+    # 角度軸（特徴量を 0〜2π に等間隔配置）
+    theta = np.linspace(0, 2 * np.pi, num_feats, endpoint=False)
+
+    # 各特徴の統計量
+    mean_r = X.mean(axis=0)
+    std_r = X.std(axis=0)
+
+    # 分散（標準偏差）を色にマッピングするため 0〜1 に正規化
+    if np.all(std_r == 0):
+        norm_std = np.zeros_like(std_r)
+    else:
+        norm_std = (std_r - std_r.min()) / (std_r.max() - std_r.min())
+
+    # カラーマップ（分散が大きいほど濃い色）
+    cmap = plt.get_cmap("Blues")
+    colors = [cmap(v) for v in norm_std]
+
+    # バーの幅（全周を特徴量数で割る）
+    width = 2 * np.pi / num_feats
+
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_subplot(111, projection="polar")
+
+    # ポーラーバー（棒グラフ）
+    bars = ax.bar(theta, mean_r, width=width, bottom=0.0,
+                  color=colors, alpha=0.8, edgecolor="black")
+
+    # 目盛り & ラベル設定
+    ax.set_xticks(theta)
     ax.set_xticklabels(feature_names, fontsize=8)
-    ax.set_title("R-Theta Coverage over Features")
-    ax.legend()
-    ax.grid(True)
+    ax.set_title("R-Theta Polar Chart (mean radius, std in color)")
+
+    # 半径方向の範囲を 0〜1 に（正規化済み前提）
+    ax.set_ylim(0, 1)
+
+    # カラーバー（分散の凡例）— fig.colorbar で Axes を明示
+    sm = plt.cm.ScalarMappable(cmap=cmap,
+                               norm=plt.Normalize(vmin=float(std_r.min()),
+                                                  vmax=float(std_r.max())))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, pad=0.1)
+    cbar.set_label("Std. Dev. (per feature)")
+
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "r_theta_distribution.png"))
-    plt.close()
+    plt.close(fig)
+

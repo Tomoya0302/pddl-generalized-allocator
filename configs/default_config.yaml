@@ -15,7 +15,7 @@ clustering:
   use_landmarks: true
   landmark_max_depth: 3
   max_cluster_size: 10        # Step 7
-  max_subtasks: 40            # Step 10 (K_max)
+  max_subtasks: 60            # Step 10 (K_max)
   epsilon_start: 0.0          # e-greedy 開始値
   epsilon_step: 0.2
   max_retries: 50
