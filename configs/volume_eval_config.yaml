@@ -1,0 +1,44 @@
+# 入力特徴量CSVファイル（solution_clustering_features.csv の出力先に応じて変更）
+input_csv: "clustering_analysis/solution_clustering_features.csv"
+
+# 使用する特徴量（CSVに含まれる列名）
+# features:
+#   - subtask_count
+#   - agent_balance_max_min_ratio
+#   - complex_role_ratio
+#   - avg_role_complexity
+
+features:
+  - agent_balance_max_min_ratio
+  - agent_balance_variance
+  - avg_role_attributes_per_subtask
+  - avg_role_complexity
+  - avg_subtask_similarity
+  - complex_role_ratio
+  - goal_max
+  - goal_mean
+  - goal_min
+  - goal_range
+  - goal_variance
+  - num_active_agents
+  - role_signature_entropy
+  - similarity_variance
+  - subtask_count
+  - unique_role_signature_count
+
+# 特徴量正規化の手法: "minmax" または "standard"
+normalization: minmax
+
+# 使用する評価指標: logdet（共分散行列の行列式の対数）や convex_hull_volume（凸包体積）
+metrics:
+  - logdet
+  - convex_hull_volume
+
+# 結果の出力先ディレクトリ
+output_dir: "clustering_analysis/volume_eval/"
+
+# true の場合、Diversity Growth Curve をプロットする
+plot_curve: true
+plot_pca_hull: true
+plot_pca_hull_3d: true
+plot_r_theta: true
