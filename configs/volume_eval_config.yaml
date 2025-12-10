@@ -15,11 +15,11 @@ features:
   - avg_role_complexity
   - avg_subtask_similarity
   - complex_role_ratio
+  - goal_range
+  - goal_variance
   - goal_max
   - goal_mean
   - goal_min
-  - goal_range
-  - goal_variance
   - num_active_agents
   - role_signature_entropy
   - similarity_variance
