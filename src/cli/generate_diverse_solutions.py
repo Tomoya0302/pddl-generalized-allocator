@@ -13,65 +13,106 @@ from pathlib import Path
 from typing import List, Dict, Any
 import yaml
 
+BASE_FEATURE_OBJECTIVES = [
+    {"name": "subtask_count",               "direction": "min"},
+    {"name": "goal_mean",                   "direction": "min"},
+    {"name": "goal_variance",               "direction": "max"},
+    {"name": "goal_min",                    "direction": "max"},
+    {"name": "goal_max",                    "direction": "min"},
+    {"name": "goal_range",                  "direction": "max"},
 
-def create_diverse_configs(base_config_path: str, num_solutions: int, output_dir: str) -> List[str]:
-    """多様な設定ファイルを生成"""
-    
-    # ベース設定を読み込み
-    with open(base_config_path, 'r') as f:
-        base_config = yaml.safe_load(f)
-    
-    config_files = []
-    strategies = ['minimize_subtasks', 'balanced', 'distribute_goals', 'auto']
-    
-    for i in range(num_solutions):
-        # 設定をコピー
-        config = base_config.copy()
-        
-        # 多様性のための設定調整
-        seed = 42 + i * 123  # 異なるseedを生成
-        strategy = strategies[i % len(strategies)]
-        
-        # クラスタリング設定を調整
-        config['clustering']['random_seed'] = seed
-        config['clustering']['optimization_strategy'] = strategy
-        config['clustering']['strategy_randomness'] = 0.1 + (i % 5) * 0.1  # 0.1-0.5の範囲
-        
-        # より多様性を持たせるための追加調整（制約範囲内で）
-        base_max_subtasks = base_config['clustering']['max_subtasks']
-        base_max_goals = base_config['clustering'].get('max_goals_per_subtask', 10)
-        
-        if i % 4 == 0:  # サブタスク数を抑える設定
-            config['clustering']['max_subtasks'] = max(base_max_subtasks - 10, int(base_max_subtasks * 0.7))
-        elif i % 4 == 1:  # サブタスク数を少し増やす設定
-            config['clustering']['max_subtasks'] = min(base_max_subtasks + 5, int(base_max_subtasks * 1.2))
-        elif i % 4 == 2:  # ゴール数を制限
-            config['clustering']['max_goals_per_subtask'] = max(base_max_goals - 3, int(base_max_goals * 0.8))
-        else:  # ゴール数を少し増やす
-            config['clustering']['max_goals_per_subtask'] = min(base_max_goals + 3, int(base_max_goals * 1.3))
-        
-        # epsilonの調整で探索の多様性を変える
-        if i % 3 == 0:
-            config['clustering']['epsilon_start'] = 0.0
-            config['clustering']['epsilon_step'] = 0.1
-        elif i % 3 == 1:
-            config['clustering']['epsilon_start'] = 0.1
-            config['clustering']['epsilon_step'] = 0.3
+    {"name": "num_active_agents",           "direction": "max"},
+    {"name": "agent_balance_variance",      "direction": "min"},
+    {"name": "agent_balance_max_min_ratio", "direction": "min"},
+
+    {"name": "unique_role_signature_count", "direction": "max"},
+    {"name": "role_signature_entropy",      "direction": "max"},
+    {"name": "avg_role_attributes_per_subtask", "direction": "max"},
+    {"name": "complex_role_ratio",          "direction": "max"},
+    {"name": "avg_role_complexity",         "direction": "max"},
+
+    {"name": "avg_subtask_similarity",      "direction": "min"},
+    {"name": "similarity_variance",         "direction": "max"},
+]
+
+def build_feature_objectives_for_solution(i: int) -> list[dict]:
+    """
+    解インデックス i に対して、
+      1周目 (round=1): 1特徴量・順方向
+      2周目 (round=2): 1特徴量・方向反転
+      3周目 (round=3): 2特徴量・順方向
+      4周目 (round=4): 2特徴量・方向反転
+      5周目 (round=5): 3特徴量・順方向
+      6周目 (round=6): 3特徴量・方向反転
+      ...
+    というルールで [{name, direction, weight}, ...] を返す。
+    """
+    n = len(BASE_FEATURE_OBJECTIVES)
+    if n == 0:
+        return []
+
+    round_index = i // n           # 0,1,2,...
+    round_num = round_index + 1    # 1,2,3,...
+
+    base_idx = i % n               # 0..n-1
+
+    # 使う特徴量の個数： 1,1,2,2,3,3,4,4,...
+    combo_size = (round_num + 1) // 2
+
+    # 偶数ラウンドなら方向反転
+    flip_direction = (round_num % 2 == 0)
+
+    # base_idx から combo_size 個の特徴量をリング状に選ぶ
+    indices = [(base_idx + offset) % n for offset in range(combo_size)]
+    weight = 1.0 / combo_size
+
+    objectives: list[dict] = []
+    for idx in indices:
+        base = BASE_FEATURE_OBJECTIVES[idx]
+        base_dir = base["direction"]
+        if flip_direction:
+            direction = "max" if base_dir == "min" else "min"
         else:
-            config['clustering']['epsilon_start'] = 0.2
-            config['clustering']['epsilon_step'] = 0.2
-        
-        # ランドマーク使用の調整
-        config['clustering']['use_landmarks'] = (i % 2 == 0)
-        config['clustering']['landmark_max_depth'] = 2 + (i % 3)
-        
-        # 設定ファイルを保存
-        config_file = os.path.join(output_dir, f'diverse_config_{i:03d}.yaml')
-        with open(config_file, 'w') as f:
+            direction = base_dir
+
+        objectives.append(
+            {
+                "name": base["name"],
+                "direction": direction,
+                "weight": weight,
+            }
+        )
+
+    return objectives
+
+def create_diverse_configs(base_config_path: str, num_solutions: int, output_dir: str) -> list[str]:
+    with open(base_config_path, "r") as f:
+        base_config = yaml.safe_load(f)
+
+    config_files: list[str] = []
+
+    for i in range(num_solutions):
+        config = yaml.safe_load(yaml.dump(base_config))  # deep copy
+
+        # 乱数シードなどは今までどおり
+        seed = 42 + i * 123
+        config["clustering"]["random_seed"] = seed
+
+        # ★ 解 i 用の feature objectives を決定
+        objectives = build_feature_objectives_for_solution(i)
+        config["clustering"]["optimization_strategy"] = "feature_driven"
+        config["clustering"]["feature_objectives"] = objectives
+
+        # epsilon / max_subtasks / use_landmarks などは従来のロジックで揺らす
+        # （ここは既存コードをそのまま残す）
+
+        out_path = os.path.join(output_dir, f"diverse_config_{i:03d}.yaml")
+        with open(out_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False, indent=2)
-        
-        config_files.append(config_file)
-    
+
+        config_files.append(out_path)
+        print(f"  -> config {out_path} (objectives={objectives})")
+
     return config_files
 
 
@@ -246,8 +287,39 @@ def main():
     timeout_count = 0
     
     for i, config_file in enumerate(config_files):
-        print(f"⚙️  Running solution {i+1}/{args.num_solutions}: {os.path.basename(config_file)} (timeout: {timeout}s)")
-        
+        print(f"⚙️ Running solution {i+1}/{args.num_solutions}: {os.path.basename(config_file)} (timeout: {timeout}s)")
+        try:
+            with open(config_file, "r") as cf:
+                cfg_for_log = yaml.safe_load(cf)
+
+            clustering_cfg = (cfg_for_log or {}).get("clustering", {}) or {}
+
+            feature_objs = clustering_cfg.get("feature_objectives")
+            # 新方式: feature_objectives: [{name, direction, weight}, ...]
+            if feature_objs:
+                parts = []
+                for obj in feature_objs:
+                    name = obj.get("name")
+                    direction = obj.get("direction")
+                    weight = obj.get("weight", None)
+                    if weight is not None:
+                        parts.append(f"{name}({direction}, w={weight:.2f})")
+                    else:
+                        parts.append(f"{name}({direction})")
+                print(f"   ↳ 使用特徴量: " + ", ".join(parts))
+
+            else:
+                # 互換性確保: 単一指定版 (feature_objective_name / direction) を使っている場合
+                name = clustering_cfg.get("feature_objective_name")
+                direction = clustering_cfg.get("feature_objective_direction")
+                if name and direction:
+                    print(f"   ↳ 使用特徴量: {name}({direction})")
+                else:
+                    # 何も設定されていない場合
+                    pass
+        except Exception as e:
+            # ログ目的なので、失敗しても致命的にはしない
+            print(f"   ↳ 使用特徴量: 取得に失敗しました ({e})")
         output_file = str(output_dir / f'result_{i:03d}.json')
         result = run_main_with_config(config_file, output_file, timeout)
         

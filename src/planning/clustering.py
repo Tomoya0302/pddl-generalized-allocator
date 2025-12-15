@@ -9,6 +9,7 @@ from .constraint_aware_merge import constraint_aware_merge_subtasks
 from .multi_objective_merge import multi_objective_merge_subtasks
 from ..config.schema import ClusteringConfig, RolesConfigRef
 from ..utils.random_utils import RandomState
+from src.config.schema import FeatureObjective
 
 def connected_components(goal_graph: GoalGraph) -> List[Set[GroundAtom]]:
     """
@@ -127,6 +128,21 @@ def build_subtasks_with_retry(task: PlanningTask,
                 constraint_config
             )
             print(f"Debug: After constraint-aware merging: {len(subtasks)} subtasks (was {original_count})")
+
+        if cfg_cluster.optimization_strategy:
+            subtasks, used_strategy = multi_objective_merge_subtasks(
+                subtasks=subtasks,
+                task=task,
+                max_goals_per_subtask=cfg_cluster.max_goals_per_subtask,
+                target_subtask_count=cfg_cluster.max_subtasks,
+                constraint_config=constraint_config,
+                strategy_name=cfg_cluster.optimization_strategy,
+                rng=rng,
+                randomness=cfg_cluster.strategy_randomness,
+                feature_objectives=cfg_cluster.feature_objectives,
+            )
+        else:
+            print("Debug: multi-objective merge skipped (no optimization_strategy)")
 
         if len(subtasks) <= cfg_cluster.max_subtasks:
             return subtasks

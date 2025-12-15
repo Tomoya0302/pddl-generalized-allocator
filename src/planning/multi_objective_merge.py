@@ -13,7 +13,8 @@ from .constraint_aware_merge import (
     is_compatible_for_merging
 )
 from ..utils.random_utils import RandomState
-
+from src.features.domain_free_features import compute_domain_free_features
+from src.config.schema import FeatureObjective
 
 class OptimizationStrategy:
     """最適化戦略の基底クラス"""
@@ -236,30 +237,323 @@ class AutoStrategy(OptimizationStrategy):
         return self.selected_strategy.should_continue_merging(subtasks, target_count, iteration)
 
 
-def get_optimization_strategy(strategy_name: str, rng: RandomState, 
-                             randomness: float = 0.1) -> OptimizationStrategy:
-    """最適化戦略を取得"""
+class FeatureDrivenStrategy(OptimizationStrategy):
+    """
+    domain-free feature を目的関数にしたサブタスク統合戦略（複数特徴量対応版）。
+
+    self.objectives: List[FeatureObjective]
+      - name:      "subtask_count", "goal_variance", "avg_subtask_similarity", ...
+      - direction: "min" or "max"
+      - weight:    その特徴量の重み（全体で 1.0 になるようにしておくと分かりやすい）
+    """
+
+    def __init__(self, rng: RandomState, randomness: float, objectives: List[FeatureObjective]):
+        super().__init__(rng, randomness)
+        if not objectives:
+            raise ValueError("FeatureDrivenStrategy requires at least one FeatureObjective")
+        self.objectives = objectives
+
+    # --- メインのスコア計算 -------------------------------------------------
+
+    def compute_merge_score(
+        self,
+        subtask1: SubTask,
+        subtask2: SubTask,
+        task: PlanningTask,
+        constraint_config: Dict,
+        current_subtask_count: int,
+        target_count: Optional[int],
+    ) -> float:
+        """
+        2つのサブタスクをマージしたときのスコアを計算する。
+        値が大きいほど「良いマージ」。
+
+        - まず制約互換性をチェック（NG なら -inf）
+        - 各 FeatureObjective ごとに「局所 proxy スコア」を計算
+        - weight * proxy の合計を total_score とする
+        - 最後にランダム性を掛ける
+        """
+
+        max_goals_per_subtask = constraint_config.get("max_goals_per_subtask", 10)
+
+        # 制約互換性チェック
+        if not is_compatible_for_merging(
+            subtask1,
+            subtask2,
+            task,
+            max_goals_per_subtask,
+            constraint_config,
+        ):
+            return float("-inf")
+
+        total_score = 0.0
+
+        for obj in self.objectives:
+            local = self._compute_local_score_for_feature(
+                feature_name=obj.name,
+                direction=obj.direction,
+                subtask1=subtask1,
+                subtask2=subtask2,
+                task=task,
+                constraint_config=constraint_config,
+                current_subtask_count=current_subtask_count,
+                target_count=target_count,
+            )
+            total_score += obj.weight * local
+
+        # ランダムネスで軽く揺らす
+        if self.randomness > 0.0:
+            random_factor = 1.0 + (self.rng.random() - 0.5) * self.randomness
+        else:
+            random_factor = 1.0
+
+        return total_score * random_factor
+
+    # --- マージ継続条件（必要なら上書き。シンプル版） -----------------------
+
+    def should_continue_merging(
+        self,
+        subtasks: List[SubTask],
+        target_count: Optional[int],
+        iteration: int,
+    ) -> bool:
+        """
+        シンプルに「target_count を下回るまで続ける」方針。
+        より凝った stopping 条件にしたければここをいじる。
+        """
+        if target_count is None:
+            return True
+        return len(subtasks) > target_count
+
+    # --- 各特徴量ごとの「局所 proxy」スコア --------------------------------
+
+    def _compute_local_score_for_feature(
+        self,
+        feature_name: str,
+        direction: str,
+        subtask1: SubTask,
+        subtask2: SubTask,
+        task: PlanningTask,
+        constraint_config: Dict,
+        current_subtask_count: int,
+        target_count: Optional[int],
+    ) -> float:
+        """
+        1つの特徴量に対して「この 2 サブタスクをマージすると良いか」を
+        ざっくり評価する proxy。
+        ※ここは完全に heuristics なので、好みに応じて調整してOK。
+        """
+
+        # direction: "min" なら「値を下げたい」、"max" なら「上げたい」
+        want_min = (direction == "min")
+
+        size1 = len(subtask1.goals)
+        size2 = len(subtask2.goals)
+        total_size = size1 + size2
+        size_diff = abs(size1 - size2)
+
+        # サブタスク数系 ------------------------------------------------------
+        if feature_name == "subtask_count":
+            # マージすると必ずサブタスク数は 1 減る
+            # → 「min」なら常に良い (+1)、「max」なら悪い (-1)
+            return 1.0 if want_min else -1.0
+
+        # ゴール数周り --------------------------------------------------------
+        if feature_name == "goal_mean":
+            # total_size が大きいほど mean を増やしやすいとみなす
+            # 「min」なら小さい total を優先 → -total_size
+            score = -float(total_size) if want_min else float(total_size)
+            return score
+
+        if feature_name == "goal_variance":
+            # サイズ差が大きいほど variance を増やしやすいとみなす
+            score = float(size_diff)
+            return score if not want_min else -score
+
+        if feature_name == "goal_min":
+            # 小さいサブタスク同士を統合すると最小値を引き上げやすいとみなす
+            smallest = min(size1, size2)
+            score = float(smallest)
+            return score if not want_min else -score
+
+        if feature_name == "goal_max":
+            # total_size が大きいマージは最大値を押し上げるとみなす
+            # 「min」なら total_size を避ける
+            score = float(total_size)
+            return -score if want_min else score
+
+        if feature_name == "goal_range":
+            # 差が大きいマージは range を広げる/縮める方向に効くとみなす
+            score = float(size_diff)
+            return score if not want_min else -score
+
+        # エージェント関連特徴（割当前なので強い proxy は難しい）-----------
+        if feature_name in ("num_active_agents", "agent_balance_variance", "agent_balance_max_min_ratio"):
+            # ここでは「将来的にバランスを取りやすそうか」を
+            # 大雑把に 'サイズが近いペアを優先' などで proxy してもよいが、
+            # とりあえず中立に 0 を返しておく。
+            return 0.0
+
+        # role / 構造系 -------------------------------------------------------
+
+        if feature_name == "unique_role_signature_count":
+            # 同じ role_signature をまとめると unique count は減る
+            same_role = int(subtask1.role_signature == subtask2.role_signature)
+            # 「max」なら異なる role のマージを優先
+            # 「min」なら同じ role のマージを優先
+            score = 1.0 if same_role else -1.0
+            return -score if not want_min else score
+
+        if feature_name == "role_signature_entropy":
+            # role diversity を増やしたい場合は「異なる role を残す方向」を
+            # 目指すので、unique_role_signature_count と似た扱いもあり。
+            same_role = int(subtask1.role_signature == subtask2.role_signature)
+            score = 1.0 if same_role else -1.0
+            return -score if not want_min else score
+
+        if feature_name in ("avg_role_attributes_per_subtask", "complex_role_ratio", "avg_role_complexity"):
+            # 複雑さの proxy として、role_signature の属性数を使う
+            complexity1 = self._count_role_attributes(subtask1.role_signature)
+            complexity2 = self._count_role_attributes(subtask2.role_signature)
+            avg_complexity = (complexity1 + complexity2) / 2.0
+            score = float(avg_complexity)
+            return score if not want_min else -score
+
+        if feature_name in ("avg_subtask_similarity", "similarity_variance"):
+            sim = self._pair_similarity(subtask1, subtask2)
+
+            if feature_name == "avg_subtask_similarity":
+                # 「min」なら sim が低いペアを優先、「max」なら sim が高いペアを優先
+                return -sim if want_min else sim
+
+            # similarity_variance:
+            # 高い/低いどちらのペアも混ざってほしいので、
+            # 中庸な 0.5 から離れているほど良い、という proxy にする
+            distance_from_mid = abs(sim - 0.5)
+            score = distance_from_mid
+            return score if not want_min else -score
+
+        # 未サポートの特徴量名は 0 を返す（影響なし）
+        return 0.0
+
+    # --- 小さなユーティリティ ----------------------------------------------
+
+    @staticmethod
+    def _count_role_attributes(role_sig: Dict[str, str]) -> int:
+        """
+        role_signature から「属性の総数」を数える。
+        値は 'a|b|c' のような複数値を取り得るので '|' で分割する。
+        """
+        if not role_sig:
+            return 0
+        count = 0
+        for _, raw_v in role_sig.items():
+            if not raw_v:
+                continue
+            parts = str(raw_v).split("|")
+            count += len([p for p in parts if p])
+        return count
+
+    @staticmethod
+    def _pair_similarity(st_i: SubTask, st_j: SubTask) -> float:
+        """
+        2つのサブタスク間の類似度を、ランドマーク + role + ゴール数から
+        0〜1 のスコアでざっくり計算する。
+        analyzer の実装と対応する簡易版。
+        """
+        # ランドマーク類似度 (Jaccard)
+        lm_i = set(getattr(st_i, "landmark_predicates", []) or [])
+        lm_j = set(getattr(st_j, "landmark_predicates", []) or [])
+        if not lm_i and not lm_j:
+            landmark_sim = 0.0
+        else:
+            inter = len(lm_i & lm_j)
+            union = len(lm_i | lm_j)
+            landmark_sim = inter / union if union > 0 else 0.0
+
+        # role 類似度
+        role_sim = FeatureDrivenStrategy._role_jaccard(
+            getattr(st_i, "role_signature", {}) or {},
+            getattr(st_j, "role_signature", {}) or {},
+        )
+
+        # ゴール数類似度
+        gi = len(st_i.goals)
+        gj = len(st_j.goals)
+        if gi == 0 and gj == 0:
+            goal_sim = 1.0
+        else:
+            diff = abs(gi - gj)
+            denom = max(gi, gj, 1)
+            goal_sim = 1.0 - diff / denom
+
+        return 0.4 * landmark_sim + 0.4 * role_sim + 0.2 * goal_sim
+
+    @staticmethod
+    def _role_jaccard(role_a: Dict[str, str], role_b: Dict[str, str]) -> float:
+        """
+        2つの role_signature を Jaccard で比較する。
+        各 (key, value-part) を "key:value" という 1 要素として集合化。
+        """
+        def to_attr_set(role_sig: Dict[str, str]) -> set[str]:
+            attrs: set[str] = set()
+            for k, raw_v in role_sig.items():
+                if not raw_v:
+                    continue
+                parts = str(raw_v).split("|")
+                for p in parts:
+                    p = p.strip()
+                    if not p:
+                        continue
+                    attrs.add(f"{k}:{p}")
+            return attrs
+
+        set_a = to_attr_set(role_a)
+        set_b = to_attr_set(role_b)
+
+        if not set_a and not set_b:
+            return 0.0
+
+        inter = len(set_a & set_b)
+        union = len(set_a | set_b)
+        return inter / union if union > 0 else 0.0
+
+
+def get_optimization_strategy(
+    strategy_name: str,
+    rng: RandomState,
+    randomness: float = 0.1,
+    feature_objectives: Optional[List[FeatureObjective]] = None,
+) -> OptimizationStrategy:
+    if strategy_name == "feature_driven":
+        if not feature_objectives:
+            raise ValueError("feature_driven strategy requires feature_objectives")
+        return FeatureDrivenStrategy(rng, randomness, feature_objectives)
+
     strategies = {
         "minimize_subtasks": MinimizeSubtasksStrategy,
         "balanced": BalancedStrategy,
         "distribute_goals": DistributeGoalsStrategy,
-        "auto": AutoStrategy
+        "auto": AutoStrategy,
     }
-    
     if strategy_name not in strategies:
-        strategy_name = "balanced"  # デフォルト
-    
+        strategy_name = "balanced"
+
     return strategies[strategy_name](rng, randomness)
 
 
-def multi_objective_merge_subtasks(subtasks: List[SubTask],
-                                  task: PlanningTask,
-                                  max_goals_per_subtask: int = 10,
-                                  target_subtask_count: int = None,
-                                  constraint_config: Dict = None,
-                                  strategy_name: str = "balanced",
-                                  rng: RandomState = None,
-                                  randomness: float = 0.1) -> Tuple[List[SubTask], str]:
+def multi_objective_merge_subtasks(
+    subtasks: List[SubTask],
+    task: PlanningTask,
+    max_goals_per_subtask: int = 10,
+    target_subtask_count: int = None,
+    constraint_config: Dict = None,
+    strategy_name: str = "balanced",
+    rng: RandomState = None,
+    randomness: float = 0.1,
+    feature_objectives: Optional[List[FeatureObjective]] = None,
+) -> Tuple[List[SubTask], str]:
+
     """
     多目的最適化サブタスク統合のメイン関数
     
@@ -281,7 +575,12 @@ def multi_objective_merge_subtasks(subtasks: List[SubTask],
         }
     
     # 戦略を取得
-    strategy = get_optimization_strategy(strategy_name, rng, randomness)
+    strategy = get_optimization_strategy(
+        strategy_name,
+        rng,
+        randomness,
+        feature_objectives=feature_objectives,
+    )
     actual_strategy_name = getattr(strategy, 'strategy_name', strategy.__class__.__name__)
     
     print(f"Debug: Using optimization strategy: {actual_strategy_name}")

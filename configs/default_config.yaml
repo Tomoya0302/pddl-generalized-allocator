@@ -28,8 +28,12 @@ clustering:
   constraint_type_predicates: ["weld_type"]    # タイプ制約述語
   constraint_goal_object_index: 0              # ゴール引数のターゲットオブジェクトインデックス
   # 多目的最適化戦略
-  optimization_strategy: "auto"                # "minimize_subtasks" | "balanced" | "distribute_goals" | "auto"
+  optimization_strategy: "feature_driven"                # "minimize_subtasks" | "balanced" | "distribute_goals" | "auto"
   strategy_randomness: 0.2                     # 戦略のランダム性 [0.0-1.0]
+  # feature 指向最適化用（optimization_strategy: "feature_driven" のときのみ使用）
+  # eature_objective_name: Optional[str] = None
+  # feature_objective_direction: Optional[str] = None  # "min" or "max"
+  feature_objectives: []
 
 multiagent:
   agent_types: ["agent"]      # PDDL 型名のリスト
