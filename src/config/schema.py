@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import List, Optional, Literal
 
 @dataclass
 class PDDLConfig:
@@ -11,6 +11,12 @@ class PDDLConfig:
 class RolesConfigRef:
     role_config_file: str
     on_missing_role: str  # "error" or "skip_goal"
+
+@dataclass
+class FeatureObjective:
+    name: str                 # "subtask_count" など
+    direction: str            # "min" or "max"
+    weight: float = 1.0       # 他の特徴量との重み
 
 @dataclass
 class ClusteringConfig:
@@ -33,6 +39,10 @@ class ClusteringConfig:
     # 多目的最適化戦略
     optimization_strategy: Optional[str] = None                 # "minimize_subtasks" | "balanced" | "distribute_goals" | "auto"
     strategy_randomness: float = 0.1                           # 戦略のランダム性 [0.0-1.0]
+    # domain-free feature を使う場合の設定
+    feature_objective_name: Optional[str] = "subtask_count"   # 例: "subtask_count", "avg_subtask_similarity", ...
+    feature_objective_direction: Literal["min", "max", None] = None
+    feature_objectives: List[FeatureObjective] = field(default_factory=list)
 
 @dataclass
 class MultiAgentConfig:
