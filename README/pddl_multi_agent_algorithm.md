@@ -1,105 +1,82 @@
 # PDDL Multi-Agent Task Decomposition & Allocation Algorithm
 
-## 0. 問題設定の定式化
+本ドキュメントは、`pddl-generalized-allocator` が実装している **マルチエージェント向けタスク分解 + 割当アルゴリズム**を、数式・データ構造・処理フローとして整理したものです。
 
-**入力**
+* 対象: PDDL Domain/Problem（古典計画）
+* 目的: ゴール集合を **サブタスク** に分割し、各サブタスクを **実行可能なエージェントへ割り当て**る
+* 追加: role による意味的分割（ドメイン知識の抽出器による一般化）と、上限サブタスク数 (K_{max}) の制約下での統合
 
-- PDDL ドメイン \(\mathcal{D}\)
-- PDDL 問題 \(\mathcal{P}\)
-- ゴール集合 \(G = \{ g_1, g_2, \dots, g_N \}\)
-- エージェント集合 \(\Lambda = \{ \lambda_1, \lambda_2, \dots, \lambda_M \}\)
-
-**出力**
-
-- サブタスク集合 \(T = \{ T_1, T_2, \dots, T_K \}\)
-- 割当関数 \(\alpha : T \rightarrow \Lambda\)
-
-**制約**
-
-1. 各サブタスクはゴールの部分集合：
-   $$
-   T_i \subseteq G,\quad \bigcup_i T_i = G,\quad T_i \cap T_j = \emptyset
-   $$
-2. 各 \(T_i\) は PDDL 的に実行可能な構造制約を満たす
-3. 各 \(\alpha(T_i)\) は \(T_i\) を実行可能な能力を持つ（下記の Capabilities で定義）
-4. 可能なら \(|T| \le K_{\max}\)
+> 多様解生成（diverse solutions）・多様解評価（volume evaluation）は、別資料 `README/README_diverse_solutions.md` および `src/analyze/volume_eval` を参照してください。
 
 ---
 
-## 1. PDDL から構文木 → PlanningTask への写像
+## 1. 問題定義
 
-PDDL パーサは以下を生成：
+### 入力
 
-- Objects: \(\text{Obj}: \text{name} \mapsto \text{type}\)
-- Predicates: \(\text{Pred}: p \mapsto (t_1, \dots, t_k)\)
-- Actions: \(\text{Act}: A \mapsto (\text{params}, \text{pre}, \text{add}, \text{del})\)
-- Init State: \(I \subseteq \text{GroundAtoms}\)
-- Goals: \(G \subseteq \text{GroundAtoms}\)
+* PDDL Domain: $$\mathcal{D}$$
+* PDDL Problem: $$\mathcal{P}$$
+* ゴール集合: $$G={g_1, \cdots , g_N}$$
+* エージェント集合: $$\Lambda={\lambda_1, \cdots , \lambda_M}$$
 
-これを `PlanningTask` が保持：
+### 出力
+
+* サブタスク集合: $$T={T_1, \cdots , T_K}$$
+* 割当関数: $$\alpha : T \rightarrow \Lambda$$
+
+### 制約
+
+* 各サブタスクはゴールの部分集合:
+  $$T_i \subseteq G, ; \cup_i T_i = G, ; T_i \cap T_j = \emptyset$$
+* 各サブタスクに割り当てられたエージェントはサブタスクを実行可能
+* サブタスク数制約:
+  $$|T|\leq K_{max}$$
+
+---
+
+## 2. データ構造
+
+### PlanningTask
+
+PDDL をプログラムが扱える構造に落としたもの。
 
 ```python
 PlanningTask = {
   objects: Dict[type, Set[obj]],
-  predicates: Dict[name, PredicateSchema],
-  actions: Dict[name, ActionSchema],
+  predicates: List[PredicateSchema],
+  actions: List[ActionSchema],
   init: Set[GroundAtom],
   goals: Set[GroundAtom]
 }
 ```
 
----
+### MultiAgentTask / Capabilities
 
-## 2. MultiAgentTask + Capabilities の構築
+エージェントごとの実行可能アクション集合（能力）を定義します。
 
-PDDL の型 `agent_type` を「エージェント型」とする。\(\lambda \in \Lambda\) の PDDL 型を \(\text{type}(\lambda)\) と書く。
-
-各アクション \(A \in \text{Act}\) のパラメータ列を
-
-$$
-\text{params}(A) = (x_1{:}\tau_1, \dots, x_k{:}\tau_k)
-$$
-
-とするとき、各エージェント \(\lambda \in \Lambda\) の能力集合を次のように定義する：
-
-$$
-\text{Capabilities}(\lambda)
-  = \{ A \in \text{Act} \mid \exists x_j{:}\tau_j \in \text{params}(A): \tau_j = \text{type}(\lambda) = agent\_type \}.
-$$
-
-すなわち「エージェント型のパラメータを含むすべてのアクション」が、その型を持つエージェントにとって実行可能であるとみなす。
-
-実装イメージ：
+* $$\mathrm{Capabilities}(\lambda_i) = { A ; | ; a ;\mathrm{がパラメータ型的に実行可能} }$$
 
 ```python
-AgentCapabilities = {  # 対応するのは理論上の Capabilities(λ)
+AgentCapabilities = {
   agent_name: Set[action_names]
 }
-
-for each action A in actions:
-  for each parameter p in A.parameters:
-    if type(p) == agent_type:
-      for each agent λ with type(λ) == agent_type:
-        AgentCapabilities[λ].add(A.name)
 ```
 
 ---
 
-## 3. 因果グラフ CausalGraph の構築
+## 3. アルゴリズム全体フロー（1〜12）
 
-ノード：
+### 1. PDDL から PlanningTask を生成
 
-$$
-V = \{ p \mid p \in \text{Predicates} \}
-$$
+* Domain/Problem をパースし、オブジェクト・述語・アクション・初期状態・ゴールを構造化
 
-辺の生成則：
+### 2. MultiAgentTask + Capabilities の構築
 
-$$
-(p \rightarrow q) \in E \iff \exists A \in \text{Act}: p \in \text{Pre}(A) \land q \in \text{Add}(A)
-$$
+* エージェント型パラメータを持つアクションから、各エージェントの能力（実行可能アクション集合）を推定
 
-実装：
+### 3. 因果グラフ CausalGraph: CG の構築
+
+「前提に現れる述語」と「add 効果に現れる述語」の依存関係で、述語レベルの因果グラフを作ります。
 
 ```python
 for action in actions:
@@ -108,31 +85,13 @@ for action in actions:
       CG[p.predicate].add(q.predicate)
 ```
 
-この因果グラフは、ゴール同士が「同じ計画フローに乗りやすいかどうか」を測るための構造的近さの指標として用いる。
+> del 効果は扱わない（add の因果を追う）前提。
 
----
+### 4. ランドマーク LM 抽出
 
-## 4. ランドマーク抽出（近似版）
+各ゴール述語に対して、因果グラフを **逆探索**し、重要な中間述語をランドマークとして付与します。
 
-各ゴール \(g \in G\) の述語を \(pred(g)\) とし、因果グラフ上で逆方向探索を行う：
-
-$$
-LM(g) = \text{BFS}^{-d}(pred(g))
-$$
-
-ここで \(d\) は 1〜3 のランダムな深さ（あるいはハイパーパラメータ）とする。これは
-
-- ゴールに至るまでに「通りがちな中間述語」の近似集合
-- 異なるゴール間の「共有部分構造」の近さ
-
-を表すヒューリスティック情報である。
-
-```python
-for g in goals:
-  L[g] = backward_bfs(CausalGraph, predicate(g), depth=random(1,3))
-```
-
-結果：
+* $$LM(g) = \mathrm{BFS}^{-d}(g)$$
 
 ```python
 Landmark = {
@@ -140,268 +99,141 @@ Landmark = {
 }
 ```
 
----
+### 5. ゴール間のグラフ構築（構造的依存）
 
-## 5. ゴール間グラフ（構造的依存グラフ）の構築
+ゴール同士の関連性を、述語の一致・因果依存で定義します。
 
-ゴール \(g_i, g_j\) の述語をそれぞれ \(p_i = pred(g_i), p_j = pred(g_j)\) とする。
+* $$adj(i, j) = \left{
+  \begin{array}{ll}
+  1 & \mathrm{if} ; pred(g_i) = pred(g_j) \
+  1 & \mathrm{if} ; pred(g_i) \in CG(pred(g_j))\
+  1 & \mathrm{if} ; pred(g_j) \in CG(pred(g_i)) \
+  0 & \mathrm{otherwise} \ \end{array} \right .$$
 
-基本的な隣接条件：
+### 6. グラフ連結成分分解（構造的タスク分解）
 
-$$
-adj(i,j) = 1 \;\text{if}\;
-\begin{cases}
- p_i = p_j, & \text{(同じ述語ゴール)}\\
- p_i \in CG(p_j), & \text{(因果的に直接依存)}\\
- p_j \in CG(p_i) & \text{(因果的に直接依存)}
-\end{cases}
-$$
+* ゴール依存グラフを連結成分に分け、独立に扱える塊へ分割
 
-さらに、ランドマークに基づく「同じ計画フローに乗りそうか」の近さを、オプションで隣接に反映できる：
+### 7. クラスタ分解
 
-$$
-adj(i,j) = 1 \;\text{if 上記のいずれか または } LM(g_i) \cap LM(g_j) \neq \emptyset.
-$$
+* 連結成分内をさらにクラスタリングし、分解粒度を調整
+* 直観: 因果的に関係があるゴールが同じクラスタ、独立なら別クラスタ
 
-実装では、
+### 8. サブタスクフォーマット導入
 
-- CG ベースの条件を **必須の構造的依存** として用い
-- ランドマーク重なりを **ヒューリスティックな追加エッジ** としてオン/オフ切り替え可能
+#### 8.1 ゴール集合の定義
 
-とするのが自然である。
+* 連結成分 + クラスタで得られたゴール集合を (G_i) とする
 
-こうしてゴール間無向グラフ \(\Gamma = (G, E)\) を構築する。
+#### 8.2 サブタスクフォーマット (F)
 
----
+サブタスクが満たすべき「構造」を、role を含むタプルとして定義します。
 
-## 6. グラフ連結成分分解（第一次タスク分解）
+* $$F=(\mathcal{R}, \mathcal{E}, \mathcal{K})$$
+* $$\mathcal{R}={ r_1, \cdots , r_m }$$
+* $$\mathcal{E}(r)={ E_{r,1}, E_{r,2}, \cdots }$$
+* $$\mathcal{K}\subseteq \mathcal{R}$$
 
-$$
-\mathcal{C} = \text{ConnectedComponents}(\Gamma)
-$$
+例（溶接ドメイン）:
 
-- 因果的に関係がある（同じ計画フローに乗りやすい）ゴールは同じクラスター
-- 構造的に独立なゴールは別クラスター
+* $$\mathcal{R}={ \mathrm{base}, \mathrm{hand_type}, \mathrm{hand}, \mathrm{agent} }$$
+* $$\mathcal{K}={ \mathrm{base}, \mathrm{hand_type} }$$
 
-ここまでで得られるクラスターは、「構造保存」という意味で最も素直なタスク候補である。
+サブタスクの実体:
 
----
-
-## 7. クラスターサイズ制限（`max_cluster_size`）
-
-各 \(C \in \mathcal{C}\) を
-
-$$
-C = \{g_1,\dots,g_k\}
-$$
-
-とし、もし \(k > \text{max\_cluster\_size}\) ならば、\(C\) を内部順序（例：BFS 順やインデックス順）に沿って連続な部分列に分割する：
-
-$$
-C \approx \{ \{g_1,\dots,g_m\}, \{g_{m+1},\dots,g_{2m}\}, \dots \}.
-$$
-
-この分割は、元の \(\Gamma\) における「完全な因果独立性」を保証するものではなく、
-
-- **クラスターが巨大になりすぎるのを避けるための実用的なヒューリスティック**
-- 同一連結成分内での局所的な近さ（BFS 順）をできるだけ保つ
-
-ことを目的としている。
-
-このステップは、後述の e-greedy 再試行で「シャッフル度合い」を変化させる対象にもなる。
-
----
-
-## 8. Role Extraction（PDDL 制約を構造に埋め込む）
-
-ドメイン依存の設定として、例えば次のような対応を考える：
-
-```text
-base      ← reachable(base, weld)
-hand_type ← weld_type(weld, ht)
-hand      ← hand_type(hand, ht)
-agent     ← hand_rel(agent, hand)
-```
-
-これは論理式では：
-
-$$
-\exists b:\; reachable(b, w)
-$$
-
-$$
-\exists ht:\; weld\_type(w, ht)
-$$
-
-$$
-\exists h:\; hand\_type(h, ht)
-$$
-
-$$
-\exists \lambda:\; hand\_rel(\lambda, h)
-$$
-
-に対応する。
-
-ここで前提として：
-
-- これらの関係は「初期状態 \(I\) のみから一意に決まる」
-- プラン中に変化しない（静的述語）
-
-ことが保証されているとする。このとき、各ゴール \(g = welded(w)\) について：
-
-$$
-roles(g) = (b, ht, h, \lambda)
-$$
-
-を一意に求めることができる。
-
----
-
-## 9. Role-based Finer Partition（意味的タスク分解）
-
-クラスターキーの例として：
-
-$$
-\text{cluster\_keys} = (base, hand\_type)
-$$
-
-とり、次の同値関係でゴールを分類する：
-
-$$
-g_i \sim g_j \iff
-roles(g_i).base = roles(g_j).base
-\land
-roles(g_i).hand\_type = roles(g_j).hand\_type.
-$$
-
-第一次クラスタリングで得た各クラスター \(C \in \mathcal{C}\) を、この同値関係によりさらに細分化する：
-
-$$
-T = \text{Quotient}(\mathcal{C}, \sim).
-$$
-
-これにより：
-
-- 同じ基地・同じ工具でできるゴールは同一サブタスクにまとまり
-- 物理的に無理な組合せは（前提より）同一クラスに入り得ない
-
-という意味で、PDDL の静的制約をサブタスク構造に反映させる。
-
----
-
-## 10. `max_subtasks` 制約 + e-greedy 再試行
-
-ここまでで得られたサブタスク集合を \(T = \{T_1, \dots, T_K\}\) とする。
-
-もし \(|T| \le K_{\max}\) なら、このステップは成功とみなし次へ進む。
-
-もし \(|T| > K_{\max}\) なら、以下の **e-greedy 型再試行ループ** を実行する：
-
-1. まず、完全に同じ role パターン（base, hand\_type, hand, \(\lambda\) など）を持つ \(T_i, T_j\) に限ってマージを試みる。
-2. マージ後もなお \(|T| > K_{\max}\) であれば、現在の試行を **失敗** とみなし、Step 7 へロールバックする。
-3. 再試行回数を \(r = 0, 1, 2, \dots\) とし、各試行ごとに e-greedy パラメータ \(\varepsilon_r\) を増加させる：
-   - 例：\(\varepsilon_r = \min(1, \varepsilon_0 + r \cdot \Delta)\)
-4. Step 7（クラスターサイズ制限）の際に、
-   - 確率 \(1 - \varepsilon_r\) で「ランドマーク・因果構造に基づく順序」（BFS 順や LM 類似度順）を優先
-   - 確率 \(\varepsilon_r\) で「ゴール集合のランダムシャッフル」に基づいて分割 を行う（e-greedy）
-5. その後、Step 8〜9 を再実行して新しい \(T\) を構成し、再び \(|T| \le K_{\max}|\) かどうかを判定する。
-
-最大再試行回数 \(R_{\max}\) を越えてもなお \(|T| > K_{\max}|\) の場合のみ、
-
-$$
-\textbf{UNSAT（解なし）}
-$$
-
-と最終的に判定する。
-
-直感的には：
-
-- 初期試行では **ランドマーク・因果構造を強く信頼** して分割
-- 失敗が続くと徐々に **ランダムシャッフルの比率を増やし**, 構造ヒューリスティックから探索的挙動へと移行
-
-することで、局所解にハマるのを避けつつ、構造保存性と探索性のトレードオフを制御する。
-
----
-
-## 11. サブタスク定義
-
-各サブタスク \(T_i\) は：
+* $$T_i = (G_i, LM_i, {roles}_i)$$
 
 ```python
 SubTask {
   goals: List[GroundAtom],
   landmarks: Set[Predicate],
-  roles: {base, hand_type, hand, λ}
+  roles: {r_1, ... , r_m}
 }
 ```
 
-すなわち
+#### 8.3 抽出器 (\mathcal{E}) の一般化定義
 
-$$
-T_i = (G_i, LM_i, roles_i)
-$$
+抽出器は、初期状態 (I) とゴール (g) から role の値候補を抽出するルールです。
 
-という意味付きゴール集合として表現される。
+* $$\mathcal{E}={ pred, bind, val }$$
 
-ランドマーク \(LM_i\) は、
+抽出器 (E) は、述語 `pred` と引数束縛 `bind` を使って、初期状態の ground atom と join して `val` 位置の値を取り出します。
 
-- そのサブタスクを解く際に現れやすい中間述語集合
-- プランナーへのヒントや、さらなるサブタスク細分化の根拠
+* $$E(g)= { x_{val}; | ; pred(x_0,\cdots ,x_n)\in I\wedge \forall j, x_{bind(j)}=y_j }$$
 
-として利用可能である（利用するかどうかは設計に依存）。
+（ここで (y_j) は、ゴール (g) 側の引数や、すでに既知の変数束縛を表す）
+
+#### 8.4 Role Extraction 全体は SAT/Join 問題
+
+* 実装的には「ゴールの引数」↔「初期状態の事実」の結合（join）で候補集合を作り、矛盾がない組（SAT）を採用する形になります。
+
+### 9. Role-based Finer Partition（意味的タスク分解）
+
+各ゴール (g) について role 値を抽出し、キー集合 (\mathcal{K}) によるタプルで再分割します。
+
+* 各ゴール g に対して roles(g) とは:
+
+  $$roles(g) = { r\mapsto v_r ; | ; \exists E_{r,j} \in \mathcal{E}(r), v_r \in E_{r,j}(g) }$$
+
+* キー (\mathcal{K})（例: base, hand_type）でグループ化:
+
+  $$T_k = { g\in G ; | ; (roles(g).base, roles(g).hand_type) = c_k }$$
+
+#### 溶接ドメイン例（role 抽出）
+
+* ゴール例:
+  $$g = \mathrm{welded}(\mathrm{weld_pos}_i)$$
+
+* base 抽出（初期状態 (I) の `reachable` から）:
+  $$base(w)= { b ; | ; reachable(b, w)\in I }$$
+
+* hand_type 抽出（初期状態 (I) の `weld_type` から）:
+  $$hand_type(w)= { ht ; | ; weld_type(w, ht)\in I }$$
+
+> どの述語・束縛を使って role を抽出するかは、ドメインごとに `\mathcal{E}(r)` を設計します。
+
+### 10. 最大サブタスク数制約
+
+* もし (|T| > K_{max}) なら、サブタスクを統合して (K_{max}) 以下にする
+* 統合は **制約違反を起こさない**（constraint-aware）ことが必須
+
+  * 例: `reachable` / `weld_type` の矛盾を起こす統合は禁止
+
+### 11. サブタスク定義
+
+* (G_i)（ゴール群） + (LM_i)（ランドマーク） + role 情報（signature）を保持した最終サブタスク (T_i) を確定
+
+### 12. エージェント割当
+
+各サブタスク (T_i) に対して、エージェント (\lambda) のコストを定義し、最小コストのエージェントに割り当てます。
+
+* 例（単純な能力サイズベース）:
+
+  $$cost(T_i, \lambda) = \frac{1}{1+|\mathrm{Capabilities}(\lambda)|}$$
+
+* 割当:
+
+  $$\Lambda_i^* = \arg \min_\lambda cost(T_i, \lambda)$$
+
+> 実運用では、`Capabilities(\lambda)` に加えて「タスクに必要な能力」「移動コスト」「干渉（同時実行制約）」「負荷分散」などの項を加えた目的関数に拡張します。
 
 ---
 
-## 12. エージェント割当（Allocation）
+## 4. 実装メモ（読み進める順番）
 
-各サブタスク \(T_i\) と各エージェント \(\lambda \in \Lambda\) についてコスト関数
+アルゴリズム実装を追うときは、概ね次の順が読みやすいです。
 
-$$
-cost(T_i, \lambda)
-$$
-
-を定義する。
-
-単純な例：
-
-$$
-cost(T_i, \lambda) = \frac{1}{1 + |\text{Capabilities}(\lambda)|}.
-$$
-
-これにより「専門性が高い（できることが少ない）エージェントを優先する」ような割当になる。
-
-最小コスト集合：
-
-$$
-\Lambda_i^* = \arg\min_{\lambda \in \Lambda} cost(T_i, \lambda)
-$$
-
-そこからランダム選択して割り当て：
-
-$$
-\alpha(T_i) \sim \text{Uniform}(\Lambda_i^*).
-$$
-
-
+1. PDDL パーサ → PlanningTask
+2. Causal Graph / Landmark / Goal Graph
+3. Connected Components / Clustering
+4. Role extraction（(\mathcal{R},\mathcal{E},\mathcal{K}) 設計）
+5. Constraint-aware merge（(K_{max}) 調整）
+6. Allocation（cost 設計・割当）
 
 ---
 
-## 13. アルゴリズムの要約
+## 5. 付記: 多様解（Diverse Solutions）との関係
 
-1. PDDL から `PlanningTask` を構築
-2. エージェント型 `agent_type` と \(\Lambda\) から \(\text{Capabilities}(\lambda)\) を数式どおりに導出
-3. 述語レベル因果グラフ `CausalGraph` を構築
-4. 各ゴールに対しランドマーク集合 \(LM(g)\) を近似的に抽出
-5. 因果グラフとランドマークに基づきゴール間依存グラフ \(\Gamma\) を構築
-6. \(\Gamma\) の連結成分で第一次クラスタリング \(\mathcal{C}\) を得る
-7. `max_cluster_size` に従ってクラスターを分割（e-greedy 再試行では分割戦略を変化させる）
-8. Role Extraction により各ゴールに (base, hand\_type, hand, \(\lambda\)) を付与
-9. role ベースの同値関係でクラスタを細分化してサブタスク集合 \(T\) を得る
-10. `max_subtasks` 制約をチェックし、
-    - OK なら次へ
-    - NG なら e-greedy で Step 7 へロールバックし再試行（\(r\) に応じてランダム性を増加）
-11. 再試行がすべて失敗した場合のみ最終的に UNSAT
-12. 各サブタスク \(T_i\) を (goals, landmarks, roles) で定義
-13. `Capabilities(\lambda)` とコスト関数に基づいてエージェント割当 \(\alpha\) を決定
-
+* 上記 1〜12 は「1つの分解・割当」を作る基本フロー
+* 多様解生成は、クラスタ粒度・merge の順序・seed・目的関数（minimize / balanced / distribute）などを変えて、**複数の (T, \alpha)** を収集する拡張
+* 多様解評価は、生成された解集合に対して距離や被覆度（volume）を計算し、良い解集合を比較するための分析
