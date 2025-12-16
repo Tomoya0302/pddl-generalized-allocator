@@ -1,300 +1,210 @@
-# Diverse Solutions Generator with Domain-Free Features
+# 多様解生成（Diverse Solutions Generation）
 
-このドキュメントでは、`pddl-generalized-allocator` における「16種類の domain-free features を用いた多様解算出アルゴリズム」について説明します。
+このドキュメントでは、同一の PDDL Domain/Problem に対して、
+**サブタスク分解（decomposition）＋エージェント割当（allocation）** の解を複数生成し、
+「品質が同程度でも**性質が異なる**」解集合（diverse solution set）を得る方法をまとめます。
 
-対象ファイル:
-
-* `src/features/domain_free_features.py`
-* `src/planning/multi_objective_merge.py`
-* `src/planning/clustering.py`
-* `src/cli/generate_diverse_solutions.py`
-* `src/config/schema.py`
-* `configs/*.yaml`
-
-## 1. 目的
-
-従来の多様解生成は、
-
-* 乱数シード
-* クラスタリング戦略（`minimize_subtasks` / `balanced` / `distribute_goals` / `auto`）
-* クラスタサイズやサブタスク数などのパラメータ
-
-を変えることで、多様なサブタスク分解解を得ていた。
-
-本アルゴリズムではさらに一歩進めて、
-
-> **「解の形」を 16 個の domain-free features で定量化し、それぞれを“目的関数”として使い分けながら多様解を生成する**
-
-ことを目指す。
-
----
-
-## 2. 16種類の domain-free features
-
-特徴量そのものの計算は `src/features/domain_free_features.py` に集約される。特徴量は以下の通り。
-
-### 2.1 サブタスク & ゴール分布
-
-* `subtask_count`
-  サブタスク数。
-* `goal_mean`
-  サブタスク1つあたりの平均ゴール数。
-* `goal_variance`
-  サブタスク間のゴール数分散。
-* `goal_min`
-  1サブタスクあたりゴール数の最小値。
-* `goal_max`
-  1サブタスクあたりゴール数の最大値。
-* `goal_range`
-  `goal_max - goal_min`。
-
-### 2.2 エージェント負荷バランス
-
-* `num_active_agents`
-  1つ以上のサブタスクを持つエージェント数。
-* `agent_balance_variance`
-  エージェントごとの担当サブタスク数の分散。
-* `agent_balance_max_min_ratio`
-  最大担当数と最小担当数の比。
-
-### 2.3 role_signature に関する多様性・複雑さ
-
-* `unique_role_signature_count`
-  異なる `role_signature` パターン数。
-* `role_signature_entropy`
-  `role_signature` 出現分布のエントロピー。
-* `avg_role_attributes_per_subtask`
-  1サブタスクあたりの role 属性数（複数値を展開後）。
-* `complex_role_ratio`
-  複合値（`|` を含む）を持つサブタスク比率。
-* `avg_role_complexity`
-  role 属性数の平均。
-
-### 2.4 サブタスク間類似度
-
-サブタスク間の pairwise 類似度を、ランドマーク + role + ゴール数から計算し、
-
-* `avg_subtask_similarity`
-  類似度平均。
-* `similarity_variance`
-  類似度分散。
-
-として集約する。
-
-これら 16 個はすべてドメインに依存しない形で定義されているため、`domain-free features` と呼ぶ。
-
----
-
-## 3. FeatureDrivenStrategy によるタスク分解制御
-
-タスク分解の最終段階で、`multi_objective_merge.py` の `FeatureDrivenStrategy` を用いてサブタスク統合を行う。
-
-### 3.1 FeatureObjective
-
-`src/config/schema.py` にて、複数特徴量を扱うための構造体 `FeatureObjective` を定義する。
-
-```python
-@dataclass
-class FeatureObjective:
-    name: str          # 例: "subtask_count", "avg_subtask_similarity" など
-    direction: str     # "min" または "max"
-    weight: float = 1.0
-```
-
-`ClusteringConfig` はこれをフィールドとして持つ。
-
-```python
-@dataclass
-class ClusteringConfig:
-    ...
-    optimization_strategy: Optional[str] = None
-    strategy_randomness: float = 0.1
-    feature_objectives: List[FeatureObjective] = field(default_factory=list)
-```
-
-### 3.2 FeatureDrivenStrategy
-
-`FeatureDrivenStrategy` は、`feature_objectives` に含まれる複数の特徴量を重み付き和として扱い、
-
-```python
-score = sum( weight_k * proxy(feature_k, direction_k, subtask1, subtask2) )
-```
-
-という形でマージ候補のスコアを評価する。
-
-* `proxy(...)` は、16特徴量を完全に再計算する代わりに、局所的なヒューリスティックで近似する。
-* 例:
-
-  * `subtask_count` → マージすると必ず -1 なので、`min` なら常に高スコア
-  * `goal_variance` → サブタスクサイズ差が大きいマージを好む/嫌う
-  * `avg_subtask_similarity` → ランドマーク・role の似ていないペアを好む/嫌う
-
-最後に `randomness` パラメータに応じてスコアに乱数を掛けることで、局所最適に陥りにくくしている。
-
-### 3.3 clustering からの呼び出し
-
-`src/planning/clustering.py` の `build_subtasks_with_retry` 内で、
-
-1. role 制約に基づく `constraint_aware_merge_subtasks` を実行
-2. `cfg_cluster.optimization_strategy == "feature_driven"` の場合、
-   `multi_objective_merge_subtasks(..., feature_objectives=cfg_cluster.feature_objectives)` を呼び、
-   FeatureDrivenStrategy による統合を行う
-
-ことで、クラスタリングの最終形を feature-driven に制御する。
-
----
-
-## 4. 16特徴量を使った多様解生成スケジューラ
-
-多様解生成の CLI (`src/cli/generate_diverse_solutions.py`) は、
-
-* 複数の config ファイルを自動生成
-* 各 config に異なる `feature_objectives` を設定
-* それぞれを `src/cli/main.py` に渡して解を生成
-
-する仕組みになっている。
-
-### 4.1 ベースとなる16特徴量テーブル
-
-```python
-BASE_FEATURE_OBJECTIVES = [
-    {"name": "subtask_count",               "direction": "min"},
-    {"name": "goal_mean",                   "direction": "min"},
-    {"name": "goal_variance",               "direction": "max"},
-    {"name": "goal_min",                    "direction": "max"},
-    {"name": "goal_max",                    "direction": "min"},
-    {"name": "goal_range",                  "direction": "max"},
-
-    {"name": "num_active_agents",           "direction": "max"},
-    {"name": "agent_balance_variance",      "direction": "min"},
-    {"name": "agent_balance_max_min_ratio", "direction": "min"},
-
-    {"name": "unique_role_signature_count", "direction": "max"},
-    {"name": "role_signature_entropy",      "direction": "max"},
-    {"name": "avg_role_attributes_per_subtask", "direction": "max"},
-    {"name": "complex_role_ratio",          "direction": "max"},
-    {"name": "avg_role_complexity",         "direction": "max"},
-
-    {"name": "avg_subtask_similarity",      "direction": "min"},
-    {"name": "similarity_variance",         "direction": "max"},
-]
-```
-
-### 4.2 ラウンドごとの特徴量選択ルール
-
-解インデックス `i` (0-based) に対して、以下のルールで `feature_objectives` を決定する。
-
-* 1週目 (round=1): 単一特徴量（順方向）
-* 2週目 (round=2): 単一特徴量（方向反転）
-* 3週目 (round=3): 2特徴量の融合（順方向）
-* 4週目 (round=4): 2特徴量の融合（方向反転）
-* 5週目 (round=5): 3特徴量の融合（順方向）
-* 6週目 (round=6): 3特徴量の融合（方向反転）
-* ...
-
-ここで 1週 = 16解（BASE_FEATURE_OBJECTIVES の長さ）とする。
-
-擬似コード:
-
-```python
-def build_feature_objectives_for_solution(i: int) -> List[dict]:
-    n = len(BASE_FEATURE_OBJECTIVES)
-    round_index = i // n       # 0,1,2,...
-    round_num = round_index + 1
-    base_idx = i % n
-
-    # 使う特徴量の個数: 1,1,2,2,3,3,...
-    combo_size = (round_num + 1) // 2
-
-    # 偶数ラウンドは方向反転
-    flip_direction = (round_num % 2 == 0)
-
-    indices = [(base_idx + k) % n for k in range(combo_size)]
-    weight = 1.0 / combo_size
-
-    objectives = []
-    for idx in indices:
-        base = BASE_FEATURE_OBJECTIVES[idx]
-        base_dir = base["direction"]
-        direction = ("max" if base_dir == "min" else "min") if flip_direction else base_dir
-        objectives.append({
-            "name": base["name"],
-            "direction": direction,
-            "weight": weight,
-        })
-    return objectives
-```
-
-この関数で得た `objectives` を、そのまま YAML の `clustering.feature_objectives` に書き込む。
-
-### 4.3 config 生成と実行ログ
-
-`create_diverse_configs` は、
-
-1. ベース config を読み込み
-2. 各解インデックス `i` ごとに
-
-   * `build_feature_objectives_for_solution(i)` で特徴量セットを生成
-   * `clustering.optimization_strategy = "feature_driven"`
-   * `clustering.feature_objectives = objectives`
-     として新しい config を書き出す
-
-という動作を行う。
-
-CLI 実行時には、
-
-```text
-⚙️  Running solution 154/160: diverse_config_153.yaml (timeout: 120s)
-   ↳ 使用特徴量: subtask_count(min, w=0.50), avg_subtask_similarity(min, w=0.50)
-✅ Solution 154 completed successfully
-```
-
-のように、各解で使われた特徴量セットがログに出力される。
-
----
-
-## 5. 使い方
-
-### 5.1 事前準備
-
-* `FeatureObjective` / `ClusteringConfig.feature_objectives` / `FeatureDrivenStrategy` / `domain_free_features` などの変更を反映済みであること。
-* `configs/default_config.yaml` に `clustering.feature_objectives: []` が定義されていること。
-
-### 5.2 多様解生成
+* 実行エントリ: `src/cli/generate_diverse_solutions.py`
+* 典型コマンド:
 
 ```bash
 python -m src.cli.generate_diverse_solutions \
   --config configs/default_config.yaml \
-  --num-solutions 160 \
-  --output-dir diverse_feature_solutions
+  --num-solutions 20 \
+  --output-dir diverse_results
 ```
 
-* 1〜16解: 16特徴量それぞれを単独・元方向で最適化
-* 17〜32解: 同じ16特徴量を単独・方向反転で最適化
-* 33〜48解: 2特徴量の組み合わせを元方向で最適化
-* 49〜64解: 2特徴量の組み合わせを方向反転で最適化
-* 65〜...: 3特徴量、4特徴量... と順に増やしていく
-
-### 5.3 解の分析
-
-生成された `result_*.json` を `SolutionFeatureExtractor` で解析すれば、
-
-* 各解の 16 次元 feature ベクトル
-* 解どうしの距離 / クラスタリング
-
-などを通じて、「どの特徴量を目的にした解が、どのようなタスク分解構造を持ったか」を詳細に分析できる。
+> 生成した解集合の分析は、
+>
+> * クラスタリング: `README/README_clustering_analysis.md`
+> * 多様性評価: `README/README_volume_eval.md`
+>   を参照してください。
 
 ---
 
-## 6. 拡張の方向性
+## 1. 何を「多様解」と呼ぶか
 
-* FeatureDrivenStrategy 内の `proxy` 設計を改善し、「真の feature 変化」に近づける
-* エージェント負荷関連の特徴量を、allocation フェーズにも組み込む
-* 複数特徴量の重みを自動調整する（例: 既存解との距離最大化など）
+本リポジトリにおける「解」は概ね次で構成されます。
 
-現状の実装でも、
+* サブタスク集合: (T={T_1,\dots,T_K})
+* 割当: (\alpha: T\to \Lambda)
 
-* 「何を最適化した解か」が明示され
-* 16種類の domain-free features を軸に多様解を組織的に生成できる
+多様解生成は、同じ (\mathcal{D},\mathcal{P}) に対して、
+((T,\alpha)) を複数作り、その集合 (\mathcal{S}={(T,\alpha)}_1^n) を出力します。
 
-という点で、従来の seed ベース多様化よりも制御性と解釈性が高いフレームワークになっている。
+「多様」とは、たとえば以下が異なることを意味します。
+
+* **分解の違い**: ゴールのグルーピング、サブタスク数、サブタスク粒度
+* **割当の違い**: 同じ分解でも、担当エージェントの割当が異なる
+* **性質の違い**: ある目的では負荷分散が良いが、別の目的ではサブタスク数が少ない等
+
+---
+
+## 2. 基本の使い方
+
+### 2.1 最短実行
+
+```bash
+python -m src.cli.generate_diverse_solutions \
+  --config configs/default_config.yaml \
+  --num-solutions 20 \
+  --output-dir diverse_results
+```
+
+### 2.2 生成結果（出力ディレクトリ）
+
+```text
+diverse_results/
+├── result_000.json ~ result_019.json     # 生成された解
+├── diverse_config_000.yaml ~ 019.yaml    # 各解の生成に使われた設定（seed/目的/微調整パラメータ等）
+├── diversity_analysis.json               # 解集合の基本統計（距離/多様性の簡易集計など）
+└── diversity_summary.txt                 # 人が読む用の要約
+```
+
+> 後段分析（クラスタリング/volume_eval）では `result_*.json` 群を入力にするか、
+> あるいはクラスタリングで出力された特徴量CSVを入力にします（分析モジュールにより異なります）。
+
+---
+
+## 3. 多様化の仕組み（Feature-driven / Objective-driven）
+
+### 3.1 ねらい
+
+多様解生成では、単に seed を変えて「偶然の違い」を集めるだけでなく、
+**狙う性質（目的関数）を解ごとに切り替える**ことで、
+系統の異なる解が出やすいようにします。
+
+例:
+
+* サブタスク数を小さくしたい（粗い分解）
+* エージェント負荷の分散を小さくしたい（バランス重視）
+* role signature の種類を増やしたい（意味的に分かれた分解）
+
+### 3.2 `feature_objectives` の概念
+
+`configs/default_config.yaml` 側（または多様解生成側で上書きされる設定）で、
+以下のような「特徴量ベースの目的」を持ちます。
+
+* `name`: 目的名（特徴量のキー）
+* `direction`: `minimize` / `maximize`
+* `weight`: 重み
+
+例（概念）:
+
+```yaml
+clustering:
+  optimization_strategy: feature_driven
+  feature_objectives:
+    - name: subtask_count
+      direction: minimize
+      weight: 1.0
+    - name: workload_variance
+      direction: minimize
+      weight: 1.0
+```
+
+多様解生成では、各解ごとに
+
+* 目的の組み合わせ
+* 重み
+* seed
+  -（必要なら）分解パラメータ（クラスタ粒度や merge 閾値など）
+
+を変えて解を生成します。
+
+> 実際に使える `feature_objectives` の種類は、
+> 特徴量抽出実装（クラスタリング分析側の feature extractor 等）に依存します。
+
+---
+
+## 4. 「似た解ばかり」になったときの調整ポイント
+
+### 4.1 まず増やす
+
+* `--num-solutions` を増やす
+* seed のレンジを広げる（多様解生成側が seed を内部生成している場合は、その規則を調整）
+
+### 4.2 目的関数を増やす / 変える
+
+* `feature_objectives` の種類を増やす
+* 同じ特徴でも `direction` を反転する（min ↔ max）
+* 重みの比率を変える（例: workload を強く、subtask_count を弱く）
+
+### 4.3 分解粒度に効くパラメータを動かす
+
+ドメイン・実装に依存しますが、一般に次が多様性に効きます。
+
+* サブタスク数上限（(K_{max})）
+* ゴールのクラスタ分割の粒度（クラスタサイズ上限など）
+* merge の閾値（互換サブタスク統合の厳しさ）
+* role-based partition のキー（どの role をキーにするか）
+
+---
+
+## 5. 多様解生成 → 分析のおすすめワークフロー
+
+### 5.1 まず系統を可視化（クラスタリング）
+
+```bash
+python -m src.analyze.cluster_solutions --config configs/clustering_analysis_config.yaml
+```
+
+* どんなタイプの解が出ているか
+* どの目的がどの系統に効いているか
+
+をデンドログラム/散布図/summary で確認します。
+
+### 5.2 解集合としての広がりを数値化（volume_eval）
+
+```bash
+python -m src.analyze.volume_eval --config configs/volume_eval_config.yaml
+```
+
+* 解集合の多様性・被覆度（volume/coverage）
+* 距離分布
+
+を評価し、「どの生成設定（目的セット）が良い解集合を作るか」を比較できます。
+
+---
+
+## 6. 新しい目的（feature objective）を追加したい場合
+
+1. **特徴量を定義する**
+
+   * 例: サブタスクサイズ分布、担当エージェントの偏り、role signature entropy など
+2. **特徴量抽出に実装する**
+
+   * クラスタリング分析側の feature extractor（解→feature vector）に列を追加
+3. **`feature_objectives` に追加して試す**
+
+   * まずは単独（その目的だけ）で解が変わるか確認
+   * 次に複数目的の重みを調整
+
+---
+
+## 7. よくある Q&A
+
+### Q1. 多様解生成の結果を、同じ条件で再現したい
+
+* `diverse_config_XXX.yaml` を保存しておき、その設定で同じコマンドを再実行してください。
+* seed が明示されていれば基本的に再現できます（ただし内部で並列実行や非決定性がある場合は差が出ます）。
+
+### Q2. 生成に時間がかかる
+
+* 解数（`--num-solutions`）を下げる
+* 目的の数を減らす（多目的最適化が重い場合）
+* PDDL の規模（large → small）で先に試す
+
+### Q3. 生成した解が制約を破る
+
+* constraint-aware merge や、制約述語の指定がズレている可能性があります。
+* ドメインを切り替えた場合は、制約述語（例: reachable / weld_type など）を見直してください。
+
+---
+
+## 8. 関連ドキュメント
+
+* `README/pddl_multi_agent_algorithm.md` : 分解＋割当の基本アルゴリズム
+* `README/README_usage_guide.md` : 実行の全体導線
+* `README/README_clustering_analysis.md` : 特徴量抽出・クラスタリング・可視化
+* `README/README_volume_eval.md` : 多様性評価（volume/distance/coverage）
